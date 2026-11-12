@@ -15,7 +15,7 @@ BACKUP_DIR="/home/root/dumbtv-webos-backup"
 
 if [ "$(uname -s)" != "Linux" ]; then
     echo "=== Running DumbLG uninstaller from host machine ==="
-    ssh "$HOST_TV" 'sh /var/lib/webosbrew/init.d/dumblg-uninstall 2>/dev/null || sh /home/root/dumblg-install/uninstall.sh --on-tv'
+    ssh "$HOST_TV" 'sh /home/root/dumblg-uninstall 2>/dev/null || sh /home/root/dumblg-install/uninstall.sh --on-tv'
     echo "=== Uninstallation complete! ==="
     exit 0
 fi
@@ -31,12 +31,14 @@ if [ -f "$SERVICE_DIR/service.pid" ]; then
 fi
 pkill -9 relay 2>/dev/null || true
 
-# 2. Remove init.d hooks
+# 2. Remove init.d hooks (both current and legacy names)
 echo "[*] Removing init.d hooks..."
-rm -f "$INIT_DIR/50-dumblg-hosts"
+rm -f "$INIT_DIR/50-dumblg-hosts" "$INIT_DIR/80-dumblg-hosts"
 rm -f "$INIT_DIR/60-dumblg-removed-apps"
 rm -f "$INIT_DIR/70-dumblg-service"
+# dumblg-uninstall should live under /home/root/ now; kill any legacy copy too
 rm -f "$INIT_DIR/dumblg-uninstall"
+rm -f "/home/root/dumblg-uninstall"
 
 # 3. Remove Luna bus registrations
 echo "[*] Unregistering Luna Service2 files..."

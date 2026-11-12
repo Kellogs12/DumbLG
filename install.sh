@@ -168,10 +168,12 @@ ls-control scan-services >/dev/null 2>&1 || true
 echo "[*] Installing init.d boot hooks..."
 mkdir -p "$INIT_DIR"
 
-# 50-dumblg-hosts
-cat << 'EOF' > "$INIT_DIR/50-dumblg-hosts"
+# 80-dumblg-hosts — numbered higher than 70-dumblg-service so the service
+# can't later undo our bind-mount before we apply the blocks.
+cat << 'EOF' > "$INIT_DIR/80-dumblg-hosts"
 #!/bin/sh
 # Appends DUMBTV ad/ACR/Amazon blocks to /etc/hosts
+date "+%Y-%m-%d %H:%M:%S boot" >> /tmp/80-dumblg-hosts.lastrun
 if ! mount | grep -q " on /etc/hosts "; then
     cp /etc/hosts /tmp/hosts
     mount --bind /tmp/hosts /etc/hosts
@@ -195,7 +197,7 @@ cat >> /etc/hosts << 'HOSTS'
 127.0.0.1 unagi-na.amazon.com api.amazonalexa.com
 HOSTS
 EOF
-chmod +x "$INIT_DIR/50-dumblg-hosts"
+chmod +x "$INIT_DIR/80-dumblg-hosts"
 
 # 60-dumblg-removed-apps
 cat << 'EOF' > "$INIT_DIR/60-dumblg-removed-apps"
@@ -214,13 +216,19 @@ EOF
 chmod +x "$INIT_DIR/60-dumblg-removed-apps"
 
 # 70-dumblg-service
+# PID verification guards against PID reuse: a stale service.pid left after a
+# crash could otherwise point at an unrelated process (sshd, SAM, compositor).
 cat << EOF > "$INIT_DIR/70-dumblg-service"
 #!/bin/sh
 SERVICE_DIR="$SERVICE_DIR"
 PIDFILE="\$SERVICE_DIR/service.pid"
 
 if [ -f "\$PIDFILE" ]; then
-    kill -9 "\$(cat "\$PIDFILE")" 2>/dev/null || true
+    pid=\$(cat "\$PIDFILE" 2>/dev/null)
+    if [ -n "\$pid" ] && kill -0 "\$pid" 2>/dev/null && \\
+       grep -q "au.com.kellogs12.dumblg.service" "/proc/\$pid/cmdline" 2>/dev/null; then
+        kill -9 "\$pid" 2>/dev/null || true
+    fi
     rm -f "\$PIDFILE"
 fi
 
@@ -230,18 +238,20 @@ fi
 EOF
 chmod +x "$INIT_DIR/70-dumblg-service"
 
-# Copy uninstaller to init.d
-if [ -f "uninstall.sh" ]; then
-    cp "uninstall.sh" "$INIT_DIR/dumblg-uninstall"
-    chmod +x "$INIT_DIR/dumblg-uninstall"
-fi
+# Install the uninstaller under /home/root, NOT /var/lib/webosbrew/init.d/.
+# busybox run-parts auto-executes every file in init.d at boot regardless of
+# name prefix; leaving uninstall.sh there would wipe DumbLG on every reboot.
+cp "uninstall.sh" "/home/root/dumblg-uninstall"
+chmod +x "/home/root/dumblg-uninstall"
 
-# Clean up older init.d scripts with older names if present
-rm -f "$INIT_DIR/50-dumbtv-hosts" "$INIT_DIR/60-dumbtv-removed-apps" 2>/dev/null || true
+# Clean up older init.d scripts with older names if present (including a
+# previously-installed dumblg-uninstall that would self-execute at boot).
+rm -f "$INIT_DIR/50-dumbtv-hosts" "$INIT_DIR/60-dumbtv-removed-apps" \
+      "$INIT_DIR/50-dumblg-hosts" "$INIT_DIR/dumblg-uninstall" 2>/dev/null || true
 
 # 6. Apply settings and debloat right now
 echo "[*] Applying hosts blocklist..."
-sh "$INIT_DIR/50-dumblg-hosts"
+sh "$INIT_DIR/80-dumblg-hosts"
 
 echo "[*] Removing streaming bloatware apps..."
 sh "$INIT_DIR/60-dumblg-removed-apps"
@@ -265,5 +275,5 @@ echo "Service status:"
 luna-send -n 1 -a com.webos.service.secondscreen.gateway "luna://$SERVICE_ID/status" "{}" 2>/dev/null || echo "Service started in background"
 echo ""
 echo "To uninstall anytime, run:"
-echo "  sh $INIT_DIR/dumblg-uninstall"
+echo "  sh /home/root/dumblg-uninstall"
 echo "=============================================="
