@@ -1,0 +1,6 @@
+{
+  "name": "au.com.kellogs12.dumblg.service",
+  "version": "0.1.0",
+  "description": "DumbLG background service for webOS 4.5",
+  "main": "service.js"
+}

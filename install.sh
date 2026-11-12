@@ -1,120 +1,269 @@
-#!/usr/bin/env bash
-# Build and install locally; only pairing approvals require user interaction.
-set +x
-set -euo pipefail
-# Keep redirected logs plain; highlight all installer/tool stderr on a terminal.
-if [[ -t 2 && "${TERM:-}" != dumb && -z "${NO_COLOR+x}" ]]; then
-  exec 2> >(while IFS= read -r cytv_error_line || [[ -n "$cytv_error_line" ]]; do
-    printf '\033[31m%s\033[0m\n' "$cytv_error_line" >&2
-  done)
+#!/bin/sh
+set -e
+
+# DumbLG Installer for LG webOS 4.5
+# Supports running directly on TV or from a dev machine over SSH.
+
+HOST_TV="${1:-labfam}"
+APP_ID="au.com.kellogs12.dumblg.launcher"
+VERSION="0.1.0"
+IPK_FILE="${APP_ID}_${VERSION}_all.ipk"
+SERVICE_ID="au.com.kellogs12.dumblg.service"
+SERVICE_DIR="/media/developer/apps/usr/palm/services/$SERVICE_ID"
+APPS_DIR="/media/developer/apps/usr/palm/applications"
+APP_DIR="$APPS_DIR/$APP_ID"
+INIT_DIR="/var/lib/webosbrew/init.d"
+BACKUP_DIR="/home/root/dumbtv-webos-backup"
+
+# Detect if running on dev Mac / host or on the TV itself
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "=== Running DumbLG installer from host machine ==="
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    cd "$SCRIPT_DIR"
+
+    echo "[1/4] Building launcher IPK..."
+    if [ ! -f "dist/$IPK_FILE" ]; then
+        python3 package-launcher.py
+    fi
+
+    echo "[2/4] Testing SSH connection to $HOST_TV..."
+    ssh -o ConnectTimeout=5 "$HOST_TV" 'uname -a' >/dev/null
+
+    echo "[3/4] Uploading installer and payload to TV..."
+    ssh "$HOST_TV" 'mkdir -p /home/root/dumblg-install'
+    scp -r dist "$SCRIPT_DIR/service" "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh" "$HOST_TV:/home/root/dumblg-install/"
+
+    echo "[4/4] Executing on-device installation..."
+    ssh "$HOST_TV" 'cd /home/root/dumblg-install && sh install.sh --on-tv'
+    echo "=== Installation completed successfully! ==="
+    exit 0
 fi
-cd "$(dirname "$0")"
-if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
-  echo 'Usage: ./install.sh [TV IPv4 address]'
-  echo 'Requires Node.js 20.19+, npm, Python 3.9+, and LG Developer Mode + Key Server.'
-  echo 'Downloads build tools locally; pairs, syncs, builds, installs and starts Home Helper.'
-  exit 0
+
+# --- On-Device Installation Steps ---
+echo "=============================================="
+echo "      DumbLG webOS 4.5 Installer (On-TV)     "
+echo "=============================================="
+
+# 1. Backups
+mkdir -p "$BACKUP_DIR"
+if [ ! -f "$BACKUP_DIR/hosts.orig" ]; then
+    echo "[*] Creating backup of original /etc/hosts..."
+    cp /etc/hosts "$BACKUP_DIR/hosts.orig" 2>/dev/null || true
 fi
-[[ $# -le 1 ]] || { echo 'Usage: ./install.sh [TV IPv4 address]' >&2; exit 1; }
-TV_HOST="${1:-${TV_HOST:-}}"
-if [[ -z "$TV_HOST" ]]; then read -r -p 'TV IPv4 address (Developer Mode app): ' TV_HOST; fi
-export TV_HOST
-command -v python3 >/dev/null || { echo 'Install Python 3.9+ first.' >&2; exit 1; }
-python3 - <<'PY'
-import ipaddress, os, sys
-if sys.version_info < (3, 9): raise SystemExit('Python 3.9+ is required.')
-try: ipaddress.IPv4Address(os.environ['TV_HOST'])
-except ValueError: raise SystemExit('Enter a valid TV IPv4 address, for example 192.168.1.50.')
-PY
-export DEVICE="${DEVICE:-clean-your-tv-${TV_HOST//./-}}"
-[[ "$DEVICE" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'DEVICE must contain only letters, digits, _ and -.' >&2; exit 1; }
-for tool in node npm; do
-  command -v "$tool" >/dev/null || { echo 'Install Node.js 20.19+ (with npm) first.' >&2; exit 1; }
+
+# 2. Extract / Install Launcher App
+echo "[*] Installing DumbLG launcher application..."
+mkdir -p "$APPS_DIR"
+IPK_PATH="dist/$IPK_FILE"
+if [ ! -f "$IPK_PATH" ] && [ -f "$IPK_FILE" ]; then
+    IPK_PATH="$IPK_FILE"
+fi
+
+if [ -f "$IPK_PATH" ]; then
+    cp "$IPK_PATH" "$APPS_DIR/$IPK_FILE"
+    echo "    Dropped $IPK_FILE into $APPS_DIR"
+    # Install via luna appInstallService
+    luna-send -n 1 -a com.webos.service.secondscreen.gateway luna://com.webos.appInstallService/dev/install "{\"id\":\"$APP_ID\",\"ipkUrl\":\"$APPS_DIR/$IPK_FILE\"}" >/dev/null 2>&1 || true
+fi
+
+# Ensure unpacked directory is populated
+if [ ! -f "$APP_DIR/appinfo.json" ] && [ -f "$APPS_DIR/$IPK_FILE" ]; then
+    echo "    Extracting IPK contents to $APP_DIR..."
+    TMP_DIR="/tmp/dumblg-unpack-$$"
+    mkdir -p "$TMP_DIR"
+    (
+        cd "$TMP_DIR"
+        ar x "$APPS_DIR/$IPK_FILE" data.tar.gz
+        tar -zxf data.tar.gz -C /media/developer/apps/
+    )
+    rm -rf "$TMP_DIR"
+fi
+
+# 3. Install Background Service
+echo "[*] Installing DumbLG background supervisor service..."
+# Stop existing running service / relay so binary is not busy
+if [ -f "$SERVICE_DIR/service.pid" ]; then
+    kill -9 "$(cat "$SERVICE_DIR/service.pid")" 2>/dev/null || true
+fi
+pkill -9 relay 2>/dev/null || true
+rm -f "$SERVICE_DIR/bin/relay" 2>/dev/null || true
+
+mkdir -p "$SERVICE_DIR"
+if [ -d "service" ]; then
+    cp -r service/* "$SERVICE_DIR/"
+fi
+chmod +x "$SERVICE_DIR/run-js-service" 2>/dev/null || true
+chmod +x "$SERVICE_DIR/bin/relay" 2>/dev/null || true
+
+# Prepare state dir
+STATE_DIR="$SERVICE_DIR/state"
+LEGACY_STATE_DIR="/media/developer/apps/usr/palm/applications/com.local.nativehome/state"
+mkdir -p "$STATE_DIR"
+mkdir -p "$(dirname "$LEGACY_STATE_DIR")"
+rm -f "$LEGACY_STATE_DIR" 2>/dev/null || true
+ln -s "$STATE_DIR" "$LEGACY_STATE_DIR" 2>/dev/null || true
+rm -f "$STATE_DIR/relay.lock" "$STATE_DIR/watchdog" "$STATE_DIR/blocked" 2>/dev/null || true
+
+# 4. Register with Luna Service Bus
+echo "[*] Registering Luna Service2 permissions and roles..."
+for ROOT_DIR in /var/luna-service2-dev /var/luna-service2; do
+    mkdir -p "$ROOT_DIR/services.d" "$ROOT_DIR/roles.d" "$ROOT_DIR/client-permissions.d" "$ROOT_DIR/api-permissions.d" "$ROOT_DIR/manifests.d"
+
+    cat << EOF > "$ROOT_DIR/services.d/$SERVICE_ID.service"
+[D-BUS Service]
+Name=$SERVICE_ID
+Exec=$SERVICE_DIR/run-js-service -k -n $SERVICE_DIR
+Type=dynamic
+EOF
+
+    cat << EOF > "$ROOT_DIR/roles.d/$SERVICE_ID.service.json"
+{
+    "appId": "$SERVICE_ID",
+    "type": "regular",
+    "allowedNames": ["$SERVICE_ID", "*"],
+    "permissions": [
+        {"service": "$SERVICE_ID", "outbound": ["*"]},
+        {"service": "*", "inbound": ["*"], "outbound": ["*"]}
+    ]
+}
+EOF
+
+    cat << EOF > "$ROOT_DIR/client-permissions.d/$SERVICE_ID.root.json"
+{
+    "$SERVICE_ID*": ["all"]
+}
+EOF
+
+    cat << EOF > "$ROOT_DIR/api-permissions.d/$SERVICE_ID.api.public.json"
+{
+    "public": ["$SERVICE_ID/*"]
+}
+EOF
+
+    cat << EOF > "$ROOT_DIR/api-permissions.d/$SERVICE_ID.api.json"
+{
+    "$SERVICE_ID.group": ["$SERVICE_ID/*"],
+    "ares.webos.cli": ["$SERVICE_ID/*"]
+}
+EOF
+
+    cat << EOF > "$ROOT_DIR/manifests.d/au.com.kellogs12.dumblg.json"
+{
+    "id": "au.com.kellogs12.dumblg",
+    "version": "$VERSION",
+    "serviceFiles": ["$ROOT_DIR/services.d/$SERVICE_ID.service"],
+    "roleFiles": ["$ROOT_DIR/roles.d/$SERVICE_ID.service.json"],
+    "clientPermissionFiles": ["$ROOT_DIR/client-permissions.d/$SERVICE_ID.root.json"],
+    "apiPermissionFiles": [
+        "$ROOT_DIR/api-permissions.d/$SERVICE_ID.api.json",
+        "$ROOT_DIR/api-permissions.d/$SERVICE_ID.api.public.json"
+    ]
+}
+EOF
 done
-node -e 'const [major,minor]=process.versions.node.split(".").map(Number);if(major<20||(major===20&&minor<19))process.exit(1)' || { echo 'Node.js 20.19+ is required.' >&2; exit 1; }
-npm ci --ignore-scripts --no-audit --no-fund
-stage='preparing tools'
-trap 'echo "Installation stopped while $stage. Fix the reported error and rerun ./install.sh. See docs/RECOVERY.md if packages were already installed." >&2' ERR
-umask 077
-printf '\nPreparing local build tools (no sudo)...\n'
-python3 -m venv .venv
-export PATH="$PWD/.venv/bin:$PATH"
-# An explicit compiler also works on platforms without a ziglang Python wheel.
-if [[ -z "${ZIG:-}" ]] && command -v zig >/dev/null; then
-  ZIG="$(command -v zig)"
+
+ls-control scan-services >/dev/null 2>&1 || true
+
+# 5. Install init.d hooks
+echo "[*] Installing init.d boot hooks..."
+mkdir -p "$INIT_DIR"
+
+# 50-dumblg-hosts
+cat << 'EOF' > "$INIT_DIR/50-dumblg-hosts"
+#!/bin/sh
+# Appends DUMBTV ad/ACR/Amazon blocks to /etc/hosts
+if ! mount | grep -q " on /etc/hosts "; then
+    cp /etc/hosts /tmp/hosts
+    mount --bind /tmp/hosts /etc/hosts
 fi
-if [[ -z "${ZIG:-}" ]]; then
-  if [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == */com.termux/* || "${OSTYPE:-}" == linux-android* ]]; then
-    echo 'Termux requires a working Zig 0.14.1 compiler. Set ZIG=/absolute/path/to/zig and rerun ./install.sh; the ziglang Python distribution is not available for Android.' >&2
-    exit 1
-  fi
-  python3 -m pip install 'ziglang==0.14.1'
-  ZIG="$(python3 -c 'from pathlib import Path; import ziglang; print(Path(ziglang.__file__).parent / "zig")')"
+
+if grep -q "DUMBTV-WEBOS-BLOCKLIST" /etc/hosts; then
+    exit 0
 fi
-export ZIG
-[[ "$("$ZIG" version)" == 0.14.1 ]] || { echo 'ZIG must point to a working Zig 0.14.1 executable.' >&2; exit 1; }
-python3 -m pip install -r requirements.txt -r scripts/build-requirements.txt
-# Pin the official CLI locally instead of depending on a global CLI's version.
-npm install --prefix build/tools --no-audit --no-fund '@webos-tools/cli@3.2.6'
-export PATH="$PWD/build/tools/node_modules/.bin:$PATH"
-stage='pairing with the TV'
-printf '\nEnable Developer Mode and Key Server on the TV. Keep its screen open.\n'
-# Never print --listfull: saved profiles may include passphrases.
-profile=$(ares-setup-device --listfull | python3 -c '
-import json, os, sys
-matches=[d for d in json.load(sys.stdin) if d["name"]==os.environ["DEVICE"]]
-if matches and matches[0].get("deviceinfo") != dict(ip=os.environ["TV_HOST"], port="9922", user="prisoner"):
-    raise SystemExit("DEVICE has a different address or SSH configuration. Choose a different DEVICE name.")
-print("existing" if matches else "new")')
-if [[ "$profile" == new ]]; then
-  info=$(python3 -c 'import json,os; print(json.dumps(dict(host=os.environ["TV_HOST"],port="9922",username="prisoner")))')
-  # CLI 3.2.6 prints every saved profile (including passphrases) after --add.
-  if ! ares-setup-device --add "$DEVICE" --info "$info" >/dev/null 2>&1; then
-    echo 'Could not create the TV profile. Check webOS CLI configuration and permissions.' >&2
-    exit 1
-  fi
+
+cat >> /etc/hosts << 'HOSTS'
+
+# --- DUMBTV-WEBOS-BLOCKLIST ---
+127.0.0.1 ad.lgappstv.com lgsmartad.com ngfts.lgsmartad.com
+127.0.0.1 ibis.lgappstv.com us.ibs.lgappstv.com kr.ibs.lgappstv.com
+127.0.0.1 eic.lgtvsdp.com ad.lgsmartserver.com smartshare.lgtvsdp.com
+127.0.0.1 livepluszz.lgtvsdp.com lgacr.com
+127.0.0.1 info.lgsmartad.com kr.info.lgsmartad.com ca.info.lgsmartad.com
+127.0.0.1 rdx2.lgtvsdp.com lgnoti.lgtvsdp.com kr.lgtvsdp.com
+127.0.0.1 kr.coredata.lgsmartserver.com us.coredata.lgsmartserver.com
+127.0.0.1 softwareupdates.amazon.com arcus-uswest.amazon.com
+127.0.0.1 unagi-na.amazon.com api.amazonalexa.com
+HOSTS
+EOF
+chmod +x "$INIT_DIR/50-dumblg-hosts"
+
+# 60-dumblg-removed-apps
+cat << 'EOF' > "$INIT_DIR/60-dumblg-removed-apps"
+#!/bin/sh
+# Re-removes bloat apps on boot and after 60s
+APPS="com.pplus.webapp.prod-intl com.disney.disneyplus-prod com.streamotion.binge com.foxtel.app stan.webos2 com.apple.appletv com.streamotion.kayosports au.com.optus.sport.lgtv tv.twitch.tv.starshot.lg googleplaymovieswebos"
+remove() {
+    for a in $APPS; do
+        rm -rf /media/cryptofs/apps/usr/palm/applications/$a 2>/dev/null
+        rm -rf /media/cryptofs/apps/usr/palm/services/${a}.* 2>/dev/null
+    done
+}
+remove
+( sleep 60; remove ) &
+EOF
+chmod +x "$INIT_DIR/60-dumblg-removed-apps"
+
+# 70-dumblg-service
+cat << EOF > "$INIT_DIR/70-dumblg-service"
+#!/bin/sh
+SERVICE_DIR="$SERVICE_DIR"
+PIDFILE="\$SERVICE_DIR/service.pid"
+
+if [ -f "\$PIDFILE" ]; then
+    kill -9 "\$(cat "\$PIDFILE")" 2>/dev/null || true
+    rm -f "\$PIDFILE"
 fi
-# The CLI prompts for the passphrase and saves the SSH key and passphrase itself.
-ares-novacom -d "$DEVICE" --getkey
-reply=$(ares-novacom -d "$DEVICE" --run 'echo CYTV_SSH_OK')
-[[ "$reply" == *CYTV_SSH_OK* ]] || { echo 'SSH connection was not confirmed.' >&2; exit 1; }
-tv_node=$(ares-novacom -d "$DEVICE" --run '/usr/bin/node -p "process.versions.node"')
-python3 - "$tv_node" <<'PY'
-import re, sys
-# CLI 3.x writes informational banners to stdout alongside the remote result.
-version = '\n'.join(line for line in sys.argv[1].splitlines() if not line.startswith('[Info]')).strip()
-if not re.fullmatch(r'\d+\.\d+\.\d+', version) or tuple(map(int, version.split('.'))) < (0, 10, 15):
-    raise SystemExit('Home Helper requires TV Node.js 0.10.15 or newer. Installation has not started.')
-PY
-# Generated icons/directories and native executables must be readable/traversable
-# by the TV runtime after packaging. Pairing keys enforce their own private modes.
-umask 022
-stage='reading the TV app list'
-printf '\nAccept the remote-control pairing request on the TV if shown.\n'
-python3 sync-apps.py "$TV_HOST"
-python3 - <<'PY'
-import json
-from pathlib import Path
-s=Path('launcher/apps.js').read_text()
-apps=json.loads(s[s.index('{'):].rstrip().rstrip(';'))['apps']
-if not apps: raise SystemExit('No apps were synced. Check TV pairing and icon-download errors before retrying.')
-PY
-stage='building packages'
-bash scripts/build.sh
-# Use metadata rather than version globs: never install a stale release from dist/.
-launcher=$(python3 -c 'import json; a=json.load(open("launcher/appinfo.json")); print("dist/"+a["id"]+"_"+a["version"]+"_all.ipk")')
-helper=$(python3 -c 'import json; a=json.load(open("native/app/appinfo.json")); print("dist/"+a["id"]+"_"+a["version"]+"_arm.ipk")')
-[[ -s "$launcher" && -s "$helper" ]] || { echo 'Build did not produce both packages.' >&2; exit 1; }
-stage='installing packages'
-ares-install -d "$DEVICE" "$helper"
-ares-install -d "$DEVICE" "$launcher"
-stage='configuring Home Helper'
-bash scripts/configure-tv.sh
-stage='starting Home Helper'
-ares-launch -d "$DEVICE" -p '{"nativeHomeStart":true}' com.local.nativehome
-printf '\nPackages installed and helper launch requested. Check the TV now:\n'
-printf '  Open an app, then press Home to return to your launcher.\n'
-printf '  Press Home three times within two seconds, releasing between presses, to stop the helper and return to LG Home.\n'
-printf '  The helper stays stopped. To resume, open Home Helper, choose Start Helper and confirm.\n'
-printf '  Test arrows, OK, volume, standby/wake and cold boot.\n'
-printf 'Keep Developer Mode active. Your computer can be switched off during everyday use.\n'
+
+if [ -x "\$SERVICE_DIR/run-js-service" ]; then
+    nohup "\$SERVICE_DIR/run-js-service" -k -n "\$SERVICE_DIR" > /var/log/dumblg-service.log 2>&1 &
+fi
+EOF
+chmod +x "$INIT_DIR/70-dumblg-service"
+
+# Copy uninstaller to init.d
+if [ -f "uninstall.sh" ]; then
+    cp "uninstall.sh" "$INIT_DIR/dumblg-uninstall"
+    chmod +x "$INIT_DIR/dumblg-uninstall"
+fi
+
+# Clean up older init.d scripts with older names if present
+rm -f "$INIT_DIR/50-dumbtv-hosts" "$INIT_DIR/60-dumbtv-removed-apps" 2>/dev/null || true
+
+# 6. Apply settings and debloat right now
+echo "[*] Applying hosts blocklist..."
+sh "$INIT_DIR/50-dumblg-hosts"
+
+echo "[*] Removing streaming bloatware apps..."
+sh "$INIT_DIR/60-dumblg-removed-apps"
+
+echo "[*] Starting DumbLG supervisor service..."
+sh "$INIT_DIR/70-dumblg-service"
+sleep 2
+
+# 7. Launch DumbLG Home
+echo "[*] Launching DumbLG Home..."
+luna-send -n 1 -a com.webos.service.secondscreen.gateway luna://com.webos.applicationManager/launch "{\"id\":\"$APP_ID\"}" >/dev/null 2>&1 || true
+
+echo ""
+echo "=============================================="
+echo "        DumbLG Installed Successfully!        "
+echo "=============================================="
+echo "Active init.d scripts:"
+ls -la "$INIT_DIR"
+echo ""
+echo "Service status:"
+luna-send -n 1 -a com.webos.service.secondscreen.gateway "luna://$SERVICE_ID/status" "{}" 2>/dev/null || echo "Service started in background"
+echo ""
+echo "To uninstall anytime, run:"
+echo "  sh $INIT_DIR/dumblg-uninstall"
+echo "=============================================="

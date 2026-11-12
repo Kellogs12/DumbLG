@@ -1,160 +1,111 @@
-![Clean Your TV — for LG webOS](assets/brand/readme-logo.png#gh-light-mode-only)
-![Clean Your TV — for LG webOS](assets/brand/readme-logo-dark.png#gh-dark-mode-only)
+# DumbLG
 
-<a id="clean-your-tv--lg-webos"></a>
-<a id="what-it-does"></a>
-<a id="how-it-works"></a>
+A fast, lightweight custom home launcher and telemetry/ad blocker for older LG webOS 4.5 TVs (e.g. 65UM7400PTA, webOS 4.5, firmware 05.40.97, Node.js 0.12.2 on-TV, Python 2.7).
 
-# Clean Your TV
+Forked from [Razdva122/clean-your-tv-lg-webos](https://github.com/Razdva122/clean-your-tv-lg-webos) with inspiration from [lasharor/cleanyourtv-WebOS](https://github.com/lasharor/cleanyourtv-WebOS) and [humblemuzzu/dumbtv](https://github.com/humblemuzzu/dumbtv).
 
-A personal home screen for LG webOS: your apps, your order, and a configurable
-dock, without sponsored rows in this launcher. It runs on the TV; your computer
-can be switched off after setup. It does not remove advertisements from other
-LG screens or obtain root access.
+---
 
-## Installation guide in your language
+## Highlights
 
-[English](docs/i18n/en.md) · [Deutsch](docs/i18n/de.md) · [Español](docs/i18n/es.md) ·
-[Português (Brasil)](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Italiano](docs/i18n/it.md) ·
-[한국어](docs/i18n/ko.md) · [हिन्दी](docs/i18n/hi.md) · [Polski](docs/i18n/pl.md) ·
-[Čeština](docs/i18n/cs.md) · [Русский](docs/i18n/ru.md) · [简体中文](docs/i18n/zh-Hans.md) · [繁體中文](docs/i18n/zh-Hant.md).
+- **Replaces LG Home Screen**: Seamlessly redirects the remote HOME button to the lightweight DumbLG launcher (`au.com.kellogs12.dumblg.launcher`).
+- **Node 0.12 Compatible**: Designed specifically for webOS 4.5 devices that ship with Node v0.12.2 and Python 2.7 (does not require Node 8+ or Python 3.9 on-device).
+- **Evdev Hardware Input Grab**: Uses an ARM32 static `relay` supervisor that hooks `/dev/input/event3` (Magic Remote) and `/dev/input/event1` (IR Remote) for instantaneous Home button interception.
+- **Emergency Exit**: Triple-press Home within 2 seconds instantly ungrabs input and restores the stock LG Home screen without losing any user configuration.
+- **Live-Settings Hook**: Re-applies privacy and performance settings on every boot via Luna Service2 bus calls (`livePlus: off`, `quickStartMode: off`, `homePromotion: off`, `homeAutoLaunch: off`, `screenSaverAd: off`, `adCookie: off`, `aiNudge: off`).
+- **Telemetry & Ad Blocking**: Bundled `50-dumblg-hosts` init.d hook bind-mounts `/etc/hosts` and blocks 11 known LG ad/ACR and Amazon telemetry domains.
+- **Streaming Bloatware Removal**: Bundled `60-dumblg-removed-apps` init.d hook sweeps and uninstalls 10 preinstalled streaming applications on boot and 60 seconds post-boot.
+- **One-Command Install & Uninstall**: Full automated setup over SSH without requiring webOS SDK CLI or desktop wizards.
 
-<a id="browser-preview"></a>
+---
 
-[Project website](https://razdva122.github.io/clean-your-tv-lg-webos/) ·
-[Try the browser demo](https://razdva122.github.io/clean-your-tv-lg-webos/demo/) ·
-[Installation guide](docs/INSTALL.md) · [Help and recovery](docs/RECOVERY.md)
+## Target Device Prerequisites
 
-![Classic menu with reference app icons](docs/launcher-classic.jpg)
+- Rooted webOS TV (e.g. via [faultmanager-autoroot](https://github.com/throwaway96/faultmanager-autoroot)).
+- [webOS Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel) installed.
+- SSH key authentication enabled on port 22 as root (e.g. configured in SSH config as host `labfam`).
 
-*Classic, the default built-in theme, shown in the browser preview. Reference apps are not bundled; TV functions are simulated.*
+---
 
-## Themes
+## Quick Start
 
-Choose built-in **Classic**, **Liquid Glass** or **Ribbon**, or install community themes.
-Manage them in **Settings → Themes** on your TV.
+### Installation
 
-| Classic menu | Liquid Glass | Ribbon |
-| --- | --- | --- |
-| <img src="docs/launcher-classic.jpg" alt="Classic menu browser preview" width="280"> | <img src="docs/launcher-liquid-glass.jpg" alt="Liquid Glass browser preview" width="280"> | <img src="docs/launcher-ribbon.jpg" alt="Ribbon with Black Hole video by Xecutioner — browser preview" width="280"> |
+From your dev machine (Mac/Linux):
+```bash
+git clone https://github.com/Kellogs12/DumbLG.git
+cd DumbLG
+./install.sh labfam
+```
 
-Ribbon wallpaper video: **Xecutioner** · non-commercial use with attribution.
+Or execute directly on the TV over SSH:
+```bash
+ssh labfam 'cd /home/root/dumblg-install && sh install.sh --on-tv'
+```
 
-Ribbon stays inside the single full-screen Home app, with its own wallpaper in both editions. It does not show another app or HDMI behind the cards. See [compatibility](docs/COMPATIBILITY.md) for the tested scope.
+The installer will:
+1. Back up existing configuration to `/home/root/dumbtv-webos-backup/`.
+2. Build and install the launcher IPK to `/media/developer/apps/usr/palm/applications/`.
+3. Install and elevate the background supervisor service (`au.com.kellogs12.dumblg.service`).
+4. Register Luna Service2 permissions, roles, and manifests.
+5. Install boot hooks into `/var/lib/webosbrew/init.d/`:
+   - `50-dumblg-hosts`
+   - `60-dumblg-removed-apps`
+   - `70-dumblg-service`
+   - `dumblg-uninstall`
+6. Apply live settings and start DumbLG Home immediately.
 
-**[Try the themes in the main browser preview →](https://razdva122.github.io/clean-your-tv-lg-webos/demo/)**
+---
 
-Use the theme cards above the simulated TV to switch themes and compare layouts,
-then choose Root or No-root to preview either edition. No TV connection or
-installation is needed. See the [theme guide](docs/THEMES.md) for installation
-and creating your own theme.
+## Uninstallation
 
-<a id="install-with-cytv"></a>
-<a id="get-started"></a>
+To cleanly restore the TV to stock state at any time:
 
-## Download and install
+```bash
+ssh labfam 'sh /var/lib/webosbrew/init.d/dumblg-uninstall'
+```
 
-<!-- release:downloads -->
-Current stable release: **[v1.18.1](https://github.com/Razdva122/clean-your-tv-lg-webos/releases/tag/v1.18.1)** — [release notes](docs/RELEASE-1.18.1.md).
-<!-- /release:downloads -->
+Or from your computer:
+```bash
+./uninstall.sh labfam
+```
 
-[![Download Windows x64 graphical installer — GUI ZIP](assets/brand/downloads/windows.svg)](https://github.com/Razdva122/clean-your-tv-lg-webos/releases/latest/download/cytv-windows-x64-desktop.zip)
-[![Download macOS Apple Silicon graphical installer — ZIP](assets/brand/downloads/macos-arm64.svg)](https://github.com/Razdva122/clean-your-tv-lg-webos/releases/latest/download/cytv-macos-arm64.zip)
-[![Download macOS Intel graphical installer — ZIP](assets/brand/downloads/macos-x64.svg)](https://github.com/Razdva122/clean-your-tv-lg-webos/releases/latest/download/cytv-macos-x64.zip)
-[![Download Linux x64 graphical installer — DEB](assets/brand/downloads/linux.svg)](https://github.com/Razdva122/clean-your-tv-lg-webos/releases/latest/download/cytv-linux-x64.deb)
-[![Download Android ARM64 installer — APK](assets/brand/downloads/android.svg)](https://github.com/Razdva122/clean-your-tv-lg-webos/releases/latest/download/cytv-android-arm64.apk)
+This terminates the supervisor service, removes all init.d hooks and Luna registrations, cleans up application files, restores the stock LG Home screen, and preserves all user backups in `/home/root/dumbtv-webos-backup/`.
 
-1. Download the installer for your computer or an ARM64 Android phone. The buttons follow the latest published release.
-2. Prepare TV access and choose No-root or Root in the wizard.
-3. Install, then check Home, Back, normal controls and emergency exit before daily use.
+---
 
-**[Follow the installation guide →](docs/INSTALL.md)**
+## Project Structure
 
-Windows: extract the whole ZIP before opening the app. macOS: choose Apple Silicon
-or Intel to match your Mac. See [desktop instructions](docs/DESKTOP_INSTALL.md)
-or [Android requirements](android/README.md) for platform details.
+- `/launcher/` — Clean webOS Home launcher UI (HTML/CSS/JS, ARM32 safe, card window mode).
+- `/service/` — Pure Node 0.12 background supervisor service (`service.js`) and static ARM32 `bin/relay` input grabber.
+- `/package-launcher.py` — Standalone, dependency-free script to build standard webOS `.ipk` packages using Python standard library.
+- `/install.sh` — One-command installer (runs from host over SSH or locally on TV).
+- `/uninstall.sh` — One-command uninstaller and emergency rollback script.
+- `/CHANGELOG.md` — Release history and notes.
 
-<a id="what-you-need"></a>
+---
 
-## Choose your edition
+## Emergency Exit
 
-| Your TV setup | Edition |
-| --- | --- |
-| LG Developer Mode, without root | **No-root** — Home and the on-TV Home Helper. Keep Developer Mode active. |
-| Existing root access and trusted root SSH | **Root** — native Home routing and independent recovery. Do not enable Developer Mode over root. |
+If you ever need stock LG Home without uninstalling DumbLG:
+- **Press the HOME button 3 times within 2 seconds**.
+- The relay releases the input grab and sets the emergency latch.
+- Stock LG Home opens immediately.
+- To re-enable DumbLG later:
+  ```bash
+  ssh labfam "luna-send -n 1 -a com.webos.service.secondscreen.gateway luna://au.com.kellogs12.dumblg.service/resetEmergency '{}'"
+  ```
 
-Both use the same launcher. Compatibility depends on the model, firmware and
-remote: [check requirements and known limits](docs/COMPATIBILITY.md) first.
+---
 
-<a id="remote-control-guide"></a>
-<a id="resume-after-an-emergency-exit"></a>
+## Inspiration & Acknowledgements
 
-## Everyday use
+- [Clean Your TV (Razdva122)](https://github.com/Razdva122/clean-your-tv-lg-webos) — Upstream base for the custom launcher UI and evdev relay implementation.
+- [Clean Your TV Root Edition (lasharor)](https://github.com/lasharor/cleanyourtv-WebOS) — Scope and architecture inspiration for all-in-one debloat and adblocking.
+- [dumbtv (humblemuzzu)](https://github.com/humblemuzzu/dumbtv) — Lightweight debloat philosophy and hosts blocking approach.
 
-- **Home** opens your launcher while Home control is enabled.
-- **Hold OK** on a tile to move or hide it; **+ / Add app** adds an installed app to the grid.
-- **Press Home three times within two seconds** to stop Home control and return to LG Home. This does not erase settings.
-- After an emergency exit, resume explicitly through **Home Helper** (No-root) or the Root activation control. Opening Home alone does not clear the stop.
+---
 
-[Remote controls](docs/CONTROLS.md) · [Arrange apps](docs/APP-MANAGEMENT.md) ·
-[Update or remove](docs/MAINTENANCE.md)
+## License
 
-<a id="candidate-install-root-from-the-tv"></a>
-<a id="developer-mode-auto-renewal--beta"></a>
-
-## Before you rely on it
-
-- Test results are specific to devices and versions. Read [compatibility](docs/COMPATIBILITY.md); a successful install alone does not prove daily reliability.
-- The original **1.3.0 Root updater cannot install 1.4.0 through OTA**. Keep recovery records and read [the update limitations](docs/UPDATES.md) before attempting that transition.
-- No-root needs an active Developer Mode session. Automatic renewal is optional Beta; continue monitoring LG's official timer.
-- The on-TV **Homebrew Installer is unreleased**. Use the published computer/Android installer; [candidate details](homebrew/README.md) are for coordinated testing.
-
-<a id="languages"></a>
-<a id="software-updates"></a>
-
-## Guides and help
-
-[All documentation](docs/README.md) · [Guides in your language](docs/LANGUAGES.md) ·
-[Report a problem or a successful installation](docs/FEEDBACK.md)
-
-If an AI agent helps with installation, it should prepare a short, redacted result
-and ask your permission before posting an issue. See [instructions for agents](AGENTS.md#installation-results-and-user-consent).
-
-<a id="no-root-source-installation"></a>
-<a id="run-locally"></a>
-<a id="project-layout"></a>
-
-For contributors: [build and technical references](docs/development/README.md),
-[contributing](CONTRIBUTING.md), and [release history and test evidence](docs/history/README.md).
-
-<a id="current-components-and-hardware-evidence"></a>
-
-<details>
-<summary>Versions in the stable download</summary>
-
-<!-- release:components -->
-| Component | Stable version |
-| --- | --- |
-| cytv installer | 0.18.1 |
-| Home | 1.16.1 |
-| Home Helper | 0.8.3 |
-| Root edition | 0.17.1 |
-| Both edition Updaters | 0.5.10 |
-| Android installer / versionCode | 0.17.1 / 35 |
-<!-- /release:components -->
-
-v1.15.0 fresh System Updater: 1.2.8 / protocol 1. v1.14.0 used 1.2.7. Existing supervisors stay pinned; installed 1.1.2 has no general replacement path. See the [delivery limits](docs/RELEASE-1.13.0.md).
-
-Historical System Updater in 1.7.0: 1.2.0 / protocol 1.
-See the [1.7.0 release notes](docs/RELEASE-1.7.0.md)
-and historical [1.5.0 TV acceptance and limits](docs/RELEASE-1.5.0.md).
-
-</details>
-
-<a id="credits"></a>
-
-## Credits and license
-
-Built on [OmkarK97/webos-vibehack](https://github.com/OmkarK97/webos-vibehack)
-and [Gathin23/cleanyourtv](https://github.com/Gathin23/cleanyourtv).
-Not affiliated with LG. [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md).
+MIT License. See [LICENSE](LICENSE) for details.

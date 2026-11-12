@@ -1,0 +1,9 @@
+{
+  "id": "au.com.kellogs12.dumblg.service",
+  "description": "DumbLG Service",
+  "services": [
+    {
+      "name": "au.com.kellogs12.dumblg.service"
+    }
+  ]
+}
