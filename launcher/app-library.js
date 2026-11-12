@@ -337,12 +337,11 @@
             );
           else failed();
         };
-        // A cross-package LS2 refusal need not block the existing native reader.
-        var service = root
-          ? 'com.cleanyourtv.root.preview.service'
-          : fallback
-            ? 'com.gathin.tvhome.renewal'
-            : 'com.local.nativehome.service';
+        // DumbLG uses one service ID for every path (root / native / fallback).
+        // The upstream three-way split exists because Clean Your TV ships
+        // three different on-TV services depending on install mode; we only
+        // have one.
+        var service = 'au.com.kellogs12.dumblg.service';
         bridge.call(
           'luna://' + service + '/listApps',
           root && priorityIds

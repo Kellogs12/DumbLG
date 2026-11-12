@@ -231,6 +231,33 @@ service.register('resetEmergency', function(message) {
   message.respond({ returnValue: true, message: 'Emergency exit reset; relay restarted' });
 });
 
+// Launcher pulls its app grid from this method (see launcher/app-library.js).
+// Returns { returnValue, apps, installedIds } shaped to match that caller.
+service.register('listApps', function(message) {
+  service.call('luna://com.webos.applicationManager/listLaunchPoints', {}, function(res) {
+    var points = (res && res.payload && res.payload.launchPoints) || [];
+    var apps = [];
+    var ids = [];
+    for (var i = 0; i < points.length; i++) {
+      var lp = points[i];
+      // skip DumbLG itself so it doesn't appear as a tile on its own home
+      if (lp.id === LAUNCHER_APP_ID) continue;
+      apps.push({
+        id: lp.id,
+        title: lp.title || lp.id,
+        icon: lp.icon || lp.largeIcon || lp.mediumLargeIcon || '',
+        largeIcon: lp.largeIcon || lp.icon || '',
+        appId: lp.id,
+        launchPointId: lp.launchPointId,
+        removable: !!lp.removable,
+        systemApp: !!lp.systemApp
+      });
+      ids.push(lp.id);
+    }
+    message.respond({ returnValue: true, apps: apps, installedIds: ids });
+  });
+});
+
 service.register('reboot', function(message) {
   message.respond({ returnValue: true, message: 'Rebooting...' });
   service.call('luna://com.webos.service.sleep/shutdown/machineReboot', {
