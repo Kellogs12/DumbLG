@@ -83,7 +83,12 @@ fi
 echo "[*] Installing DumbLG background supervisor service..."
 # Stop existing running service / relay so binary is not busy
 if [ -f "$SERVICE_DIR/service.pid" ]; then
-    kill -9 "$(cat "$SERVICE_DIR/service.pid")" 2>/dev/null || true
+    pid=$(cat "$SERVICE_DIR/service.pid" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && \
+       grep -q "dumblg.service" "/proc/$pid/cmdline" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$SERVICE_DIR/service.pid"
 fi
 pkill -9 relay 2>/dev/null || true
 rm -f "$SERVICE_DIR/bin/relay" 2>/dev/null || true

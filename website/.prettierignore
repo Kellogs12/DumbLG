@@ -1,6 +1,0 @@
-node_modules/
-public/
-dist/
-.astro/
-package-lock.json
-vendor/

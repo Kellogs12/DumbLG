@@ -1,8 +1,0 @@
-Theme CSS/configuration: MIT (see repository LICENSE).
-Generated wallpaper and preview: personal, non-commercial fan use; this project
-permits redistribution of these exact files with this notice, subject to any
-underlying character rights. No permission to commercialize the character is
-claimed. Itachi Uchiha and associated character rights belong to their respective
-rights holders. Unofficial fan theme; no endorsement or claim of character
-ownership. No replacement app logos are distributed. The preview depicts existing
-application branding only to demonstrate the theme.

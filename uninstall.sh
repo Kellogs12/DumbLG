@@ -27,11 +27,24 @@ echo "=============================================="
 # 1. Stop background service & relay
 echo "[*] Stopping DumbLG service and releasing input grab..."
 if [ -f "$SERVICE_DIR/service.pid" ]; then
-    kill -9 "$(cat "$SERVICE_DIR/service.pid")" 2>/dev/null || true
+    pid=$(cat "$SERVICE_DIR/service.pid" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && \
+       grep -q "dumblg.service" "/proc/$pid/cmdline" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$SERVICE_DIR/service.pid"
 fi
 pkill -9 relay 2>/dev/null || true
 
-# 2. Remove init.d hooks (both current and legacy names)
+# 2. Restore /etc/hosts and clean bind mounts
+echo "[*] Restoring /etc/hosts..."
+umount /etc/hosts 2>/dev/null || true
+rm -f /tmp/hosts 2>/dev/null || true
+if [ -f "$BACKUP_DIR/hosts.orig" ]; then
+    cp "$BACKUP_DIR/hosts.orig" /etc/hosts 2>/dev/null || true
+fi
+
+# 3. Remove init.d hooks (both current and legacy names)
 echo "[*] Removing init.d hooks..."
 rm -f "$INIT_DIR/50-dumblg-hosts" "$INIT_DIR/80-dumblg-hosts"
 rm -f "$INIT_DIR/60-dumblg-removed-apps"
@@ -40,7 +53,7 @@ rm -f "$INIT_DIR/70-dumblg-service"
 rm -f "$INIT_DIR/dumblg-uninstall"
 rm -f "/home/root/dumblg-uninstall"
 
-# 3. Remove Luna bus registrations
+# 4. Remove Luna bus registrations
 echo "[*] Unregistering Luna Service2 files..."
 for ROOT_DIR in /var/luna-service2-dev /var/luna-service2; do
     rm -f "$ROOT_DIR/services.d/$SERVICE_ID.service"
@@ -52,14 +65,14 @@ for ROOT_DIR in /var/luna-service2-dev /var/luna-service2; do
 done
 ls-control scan-services >/dev/null 2>&1 || true
 
-# 4. Remove App and Service directories
+# 5. Remove App and Service directories
 echo "[*] Removing DumbLG launcher and service files..."
 rm -rf "$APP_DIR"
 rm -f "$APPS_DIR/au.com.kellogs12.dumblg.launcher_*.ipk"
 rm -rf "$SERVICE_DIR"
 rm -rf /media/developer/apps/usr/palm/applications/com.local.nativehome/state
 
-# 5. Restore LG Home
+# 6. Restore LG Home
 echo "[*] Restoring LG default Home screen..."
 luna-send -n 1 -a com.webos.service.secondscreen.gateway luna://com.webos.applicationManager/launch '{"id":"com.webos.app.home"}' >/dev/null 2>&1 || \
 luna-send -n 1 -a com.webos.service.secondscreen.gateway luna://com.webos.applicationManager/launch '{"id":"com.webos.app.fullhome"}' >/dev/null 2>&1 || true

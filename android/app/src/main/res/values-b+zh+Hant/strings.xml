@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="installation_channel" formatted="false">CYTV</string>
-    <string name="installation_progress" formatted="false">電視操作進行中</string>
-    <string name="webview_update" formatted="false">請更新 Android System WebView 或 Chrome，然後重新開啟 CYTV（需要 WebView 108 或更新版本）。</string>
-</resources>

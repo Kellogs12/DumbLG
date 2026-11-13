@@ -155,7 +155,12 @@
         )
           window.location.reload();
       }
-      window.TV_APPS = s.inventory;
+      // Only overwrite TV_APPS from a saved profile when the saved profile
+      // actually has apps. Upstream's saved profile may be empty on our fork
+      // because we don't run cytv's updater service; keep the packaged
+      // window.TV_APPS from apps.js in that case.
+      if (s.inventory && s.inventory.apps && s.inventory.apps.length)
+        window.TV_APPS = s.inventory;
       window.CONFIG = s.config;
       if (s.renewal)
         rpc(

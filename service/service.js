@@ -24,6 +24,10 @@ var REMOVED_APPS = [
   'googleplaymovieswebos'
 ];
 
+process.on('uncaughtException', function(err) {
+  console.error('[DumbLG] Uncaught exception:', (err && err.stack) || err);
+});
+
 var service = new Service(SERVICE_ID);
 service.activityManager.create('dumblg-keepalive', function() {});
 
@@ -89,11 +93,18 @@ function applyHostsBlocklist() {
 
 function removeBloatwareApps() {
   console.log('[DumbLG] Running bloatware app removal pass...');
+  var targets = [];
   for (var i = 0; i < REMOVED_APPS.length; i++) {
     var appId = REMOVED_APPS[i];
-    try {
-      cp.exec('rm -rf /media/cryptofs/apps/usr/palm/applications/' + appId + ' /media/cryptofs/apps/usr/palm/services/' + appId + '.* 2>/dev/null');
-    } catch (e) {}
+    targets.push('/media/cryptofs/apps/usr/palm/applications/' + appId);
+    targets.push('/media/cryptofs/apps/usr/palm/services/' + appId + '.*');
+  }
+  try {
+    cp.exec('rm -rf ' + targets.join(' ') + ' 2>/dev/null', function(err) {
+      if (err) console.error('[DumbLG] bloatware removal error:', err);
+    });
+  } catch (e) {
+    console.error('[DumbLG] failed to spawn bloatware removal:', e);
   }
 }
 
@@ -234,8 +245,16 @@ service.register('resetEmergency', function(message) {
 // Launcher pulls its app grid from this method (see launcher/app-library.js).
 // Returns { returnValue, apps, installedIds } shaped to match that caller.
 service.register('listApps', function(message) {
+  console.log('[DumbLG] listApps called');
   service.call('luna://com.webos.applicationManager/listLaunchPoints', {}, function(res) {
-    var points = (res && res.payload && res.payload.launchPoints) || [];
+    if (!res || !res.payload || !res.payload.returnValue) {
+      var errMsg = (res && res.payload && (res.payload.errorText || res.payload.message)) || 'Failed to retrieve launch points';
+      console.error('[DumbLG] listApps error:', errMsg);
+      message.respond({ returnValue: false, error: errMsg, apps: [], installedIds: [] });
+      return;
+    }
+    var points = res.payload.launchPoints || [];
+    console.log('[DumbLG] listApps: got ' + points.length + ' launchPoints');
     var apps = [];
     var ids = [];
     for (var i = 0; i < points.length; i++) {
@@ -267,7 +286,6 @@ service.register('reboot', function(message) {
 
 // Boot sequences
 applyLiveSettings();
-applyHostsBlocklist();
 removeBloatwareApps();
 setTimeout(removeBloatwareApps, 60000); // 60s second pass
 
